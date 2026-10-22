@@ -162,6 +162,108 @@ class NewsGenerator:
             logger.info(f"Deduplication: {len(news_items)} \u2192 {len(unique_news)} items")
         return unique_news
 
+    def _parse_selection_response(self, response: str, news_items: dict) -> List[str]:
+        """
+        Parse the Stage 1 selection response into a list of news IDs.
+
+        Three-tier fallback strategy, so a usable selection is returned no
+        matter how the LLM formats its answer:
+          1. Standard JSON array parsing (preferred)
+          2. Regex extraction of INT-n / DOM-n IDs from free text
+          3. Heuristic scoring selection (see _heuristic_selection)
+
+        Tiers 1-2 are normalized to 15-20 items (see _normalize_selection);
+        tier 3 targets 18 items directly.
+
+        Args:
+            response: Raw Stage 1 LLM response text
+            news_items: Mapping of news ID -> news item
+
+        Returns:
+            Selected news IDs (15-20, or all items if fewer exist)
+        """
+        # Tier 1: standard JSON parsing
+        json_match = re.search(r'\[[\s\S]*?\]', response or '')
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(0))
+                if isinstance(parsed, list):
+                    valid_ids = [i for i in parsed if isinstance(i, str) and i in news_items]
+                    if valid_ids:
+                        logger.info("Stage 1 parsing: JSON")
+                        return self._normalize_selection(valid_ids, news_items)
+            except json.JSONDecodeError:
+                pass
+
+        # Tier 2: regex extraction of IDs mentioned anywhere in the text
+        found_ids = re.findall(r'(INT-\d+|DOM-\d+)', response or '')
+        valid_ids = [i for i in found_ids if i in news_items]
+        if valid_ids:
+            logger.info("Stage 1 parsing: regex extraction")
+            return self._normalize_selection(valid_ids, news_items)
+
+        # Tier 3: heuristic selection
+        logger.warning("Stage 1 parsing: heuristic selection (no IDs found in response)")
+        return self._heuristic_selection(news_items, target_count=18)
+
+    def _normalize_selection(self, selected_ids: List[str], news_items: dict) -> List[str]:
+        """
+        Normalize a parsed selection: deduplicate (keeping order), pad to
+        18 items when fewer than 15 were selected, trim to at most 20.
+        """
+        seen = set()
+        unique_ids = []
+        for news_id in selected_ids:
+            if news_id not in seen:
+                seen.add(news_id)
+                unique_ids.append(news_id)
+
+        if len(unique_ids) < 15:
+            logger.warning(f"Only {len(unique_ids)} items selected, adding more")
+            remaining = [i for i in news_items.keys() if i not in seen]
+            unique_ids.extend(remaining[:18 - len(unique_ids)])
+        elif len(unique_ids) > 20:
+            logger.warning(f"{len(unique_ids)} items selected, trimming to 20")
+            unique_ids = unique_ids[:20]
+
+        return unique_ids
+
+    def _heuristic_selection(self, news_items: dict, target_count: int = 18) -> List[str]:
+        """
+        Score-based fallback selection used when the Stage 1 response
+        contains no parseable IDs: longer descriptions, high-value
+        keywords in the title, and official company blogs score higher.
+        """
+        high_value_keywords = [
+            'breakthrough', 'release', 'launch', 'funding',
+            'acquisition', 'open-source', 'open source',
+        ]
+        premium_sources = [
+            'OpenAI Blog', 'Google AI Blog', 'DeepMind Blog', 'Meta AI Blog',
+        ]
+
+        scored_items = []
+        for news_id, item in news_items.items():
+            score = 0.0
+            # More detailed news scores higher
+            score += len(item.get('description', '') or '') * 0.001
+            # High-value keywords in the title
+            title_lower = (item.get('title', '') or '').lower()
+            score += sum(10 for kw in high_value_keywords if kw in title_lower)
+            # Official sources are more authoritative
+            if item.get('source') in premium_sources:
+                score += 20
+            scored_items.append((score, news_id))
+
+        # Highest scores first; ties keep the original order
+        scored_items.sort(key=lambda pair: pair[0], reverse=True)
+        selected = [news_id for _, news_id in scored_items[:target_count]]
+
+        int_count = sum(1 for i in selected if i.startswith('INT-'))
+        dom_count = sum(1 for i in selected if i.startswith('DOM-'))
+        logger.info(f"Heuristic selection: {int_count} international, {dom_count} domestic")
+        return selected
+
     def generate_news_digest_from_sources(
         self,
         max_tokens: int = 8000,
@@ -234,30 +336,8 @@ class NewsGenerator:
                 max_tokens=4000 # give enough tokens for selection
             )
 
-            # Parse selected IDs
-            json_match = re.search(r'\[[\s\S]*?\]', selection_response)
-            if not json_match:
-                logger.warning("Could not parse JSON from selection response, using fallback")
-                # Fallback: select first 18 items
-                selected_ids = list(news_items.keys())[:18]
-            else:
-                try:
-                    selected_ids = json.loads(json_match.group(0))
-                    # Validate IDs
-                    selected_ids = [id for id in selected_ids if id in news_items]
-
-                    # Ensure we have 15-20 items
-                    if len(selected_ids) < 15:
-                        logger.warning(f"Only {len(selected_ids)} items selected, adding more")
-                        remaining = [id for id in news_items.keys() if id not in selected_ids]
-                        selected_ids.extend(remaining[:18 - len(selected_ids)])
-                    elif len(selected_ids) > 20:
-                        logger.warning(f"{len(selected_ids)} items selected, trimming to 20")
-                        selected_ids = selected_ids[:20]
-
-                except json.JSONDecodeError:
-                    logger.warning("JSON parse error, using fallback selection")
-                    selected_ids = list(news_items.keys())[:18]
+            # Parse selected IDs (three-tier fallback: JSON -> regex -> heuristic)
+            selected_ids = self._parse_selection_response(selection_response, news_items)
 
             logger.info(f"Stage 1 completed: Selected {len(selected_ids)} news items")
             logger.debug(f"Selected IDs: {selected_ids}")
