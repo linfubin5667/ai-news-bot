@@ -8,6 +8,7 @@ import sys
 from datetime import datetime
 from src.config import Config
 from src.logger import setup_logger
+from src.metrics import MetricsCollector
 from src.news import NewsGenerator
 from src.notifiers import (
     EmailNotifier,
@@ -44,13 +45,17 @@ def main():
         logger.info(f"Web Search: {config.enable_web_search}")
         logger.info("=" * 60)
 
+        # Performance metrics for this run (exported at the end)
+        metrics = MetricsCollector()
+
         # Initialize news generator once
         logger.info("Initializing news generator...")
         news_gen = NewsGenerator(
             provider_name=config.llm_provider,
             api_key=config.llm_api_key,
             model=config.llm_model,
-            enable_web_search=config.enable_web_search
+            enable_web_search=config.enable_web_search,
+            metrics=metrics
         )
 
         # Get enabled notification methods
@@ -145,11 +150,13 @@ def main():
 
                 # Update overall results
                 for method in lang_results["sent"]:
+                    metrics.record_notification(method, True)
                     result_key = f"{method} ({language.upper()})"
                     if result_key not in overall_results["sent"]:
                         overall_results["sent"].append(result_key)
                 
                 for method in lang_results["failed"]:
+                    metrics.record_notification(method, False)
                     result_key = f"{method} ({language.upper()})"
                     if result_key not in overall_results["failed"]:
                         overall_results["failed"].append(result_key)
@@ -163,6 +170,9 @@ def main():
                     result_key = f"{method} ({language.upper()})"
                     if result_key not in overall_results["failed"]:
                         overall_results["failed"].append(result_key)
+
+        # Export performance metrics for this run
+        metrics.export_metrics()
 
         # Final Summary
         logger.info("=" * 60)
