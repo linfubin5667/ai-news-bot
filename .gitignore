@@ -57,3 +57,6 @@ htmlcov/
 
 # Incremental mode state (TODO #9)
 .last_run
+
+# Local digest backups when notifications fail (TODO #10)
+.output/
