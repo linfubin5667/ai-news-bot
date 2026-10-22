@@ -1,6 +1,7 @@
 """
 News fetcher module - Fetches real-time AI news from various sources
 """
+import os
 import time
 
 import requests
@@ -9,6 +10,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from ..logger import setup_logger
+from .cache import NewsCache
 
 
 logger = setup_logger(__name__)
@@ -182,9 +184,53 @@ class NewsFetcher:
         }
 
 
+
+        # RSS fetch cache (see src/news/cache.py): repeated runs within the
+        # TTL reuse fetched items instead of hitting the network again.
+        # ENABLE_RSS_CACHE=false disables it (recommended for production);
+        # RSS_CACHE_TTL sets the freshness window in minutes (default 30).
+        cache_enabled = os.getenv("ENABLE_RSS_CACHE", "true").strip().lower() not in (
+            "false", "0", "no", "off"
+        )
+        self._rss_cache = NewsCache() if cache_enabled else None
+        try:
+            self._rss_cache_ttl = int(os.getenv("RSS_CACHE_TTL", "30"))
+        except ValueError:
+            self._rss_cache_ttl = 30
+
     def fetch_rss_feed(self, feed_url: str, max_items: int = 10) -> List[Dict[str, str]]:
         """
-        Fetch news items from an RSS feed, retrying transient failures.
+        Fetch news items from an RSS feed.
+
+        A fresh on-disk cache entry (see src/news/cache.py) is served
+        without any network request. Otherwise the feed is fetched with
+        retries (see _fetch_rss_feed_with_retry) and a successful,
+        non-empty result is cached for the next run. Failed fetches are
+        never cached.
+
+        Args:
+            feed_url: URL of the RSS feed
+            max_items: Maximum number of items to fetch
+
+        Returns:
+            List of news items with title, link, description, and published date
+        """
+        if self._rss_cache is not None:
+            cached = self._rss_cache.get_rss_cache(
+                feed_url, max_items, self._rss_cache_ttl
+            )
+            if cached is not None:
+                return cached
+
+        items = self._fetch_rss_feed_with_retry(feed_url, max_items)
+
+        if items and self._rss_cache is not None:
+            self._rss_cache.set_rss_cache(feed_url, items, max_items)
+        return items
+
+    def _fetch_rss_feed_with_retry(self, feed_url: str, max_items: int = 10) -> List[Dict[str, str]]:
+        """
+        Fetch an RSS feed with retries on transient failures.
 
         Network errors and HTTP 5xx responses are retried up to 3 attempts
         in total with exponential backoff (1s, then 2s). Permanent failures
