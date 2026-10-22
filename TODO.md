@@ -674,6 +674,8 @@ def _score_distribution(self, scores: List[float]) -> dict:
 
 ### 9. 实现增量更新模式
 
+> ✅ **已完成（2026-10-22）**：新建 src/news/incremental.py（IncrementalUpdater 状态文件 .last_run + 通用时间解析 parse_pub_time，RFC 822 / ISO 8601 / 简单格式全覆盖且统一为 UTC），fetcher 新增 fetch_news_since（先全量抓取再按发布时间过滤、新条目不足 INCREMENTAL_MIN_ITEMS 自动回退全量），generator 在开关 ENABLE_INCREMENTAL 开启时自动接入：用上次成功运行时间过滤、摘要生成成功后才推进水位线（失败不丢新闻）。两个配置项已写入 .env.example，.last_run 已加入 .gitignore。测试通过：状态文件读写与损坏容错、三种时间格式、增量过滤/回退/全量直通、开关接线与既有回归。
+
 **影响**：⭐⭐ | **难度**：🔧🔧🔧 | **类型**：性能优化（高频场景）
 
 **适用场景**：本地开发、自建定时任务（每小时/每4小时）
@@ -777,10 +779,10 @@ INCREMENTAL_MIN_ITEMS=10 # 最少新闻数阈值
 ```
 
 **验收标准**：
-- [ ] 首次运行或文件缺失时全量抓取
-- [ ] 后续运行只处理新新闻
-- [ ] 新闻不足时自动回退全量
-- [ ] 日志清晰显示增量 vs 全量模式
+- [x] 首次运行或文件缺失时全量抓取
+- [x] 后续运行只处理新新闻
+- [x] 新闻不足时自动回退全量
+- [x] 日志清晰显示增量 vs 全量模式
 
 **预期收益**：
 - 高频运行场景节省 70-80% 资源
