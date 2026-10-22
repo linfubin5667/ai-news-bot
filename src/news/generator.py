@@ -457,9 +457,13 @@ class NewsGenerator:
             Exception: If fetching or generation fails
         """
         try:
-            # Fetch real-time news
+            # Fetch real-time news. When incremental mode is enabled and a
+            # previous run exists, only items newer than that run are
+            # processed (with automatic fallback to a full fetch).
             logger.info("Fetching real-time AI news from sources...")
-            news_data = self.news_fetcher.fetch_recent_news(
+            incremental_since = self.news_fetcher.incremental_since()
+            news_data = self.news_fetcher.fetch_news_since(
+                since_time=incremental_since,
                 language=language,
                 max_items_per_source=max_items_per_source
             )
@@ -587,6 +591,13 @@ class NewsGenerator:
 
             if self._metrics is not None:
                 self._metrics.record_news_counts(final_chars=len(response_text))
+
+            # Digest succeeded: advance the incremental watermark so the
+            # next run only processes newer items
+            self.news_fetcher.mark_incremental_run({
+                'fetched': fetched_total,
+                'selected': len(selected_ids),
+            })
 
             return response_text
 
