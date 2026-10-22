@@ -4,8 +4,8 @@
 
 🤖 **您的 AI 新闻助手** — 每日自动获取个性化 AI 新闻摘要，保持信息灵通
 
-[![GitHub Stars](https://img.shields.io/github/stars/giftedunicorn/ai-news-bot?style=flat-square&logo=github&color=yellow)](https://github.com/giftedunicorn/ai-news-bot/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/giftedunicorn/ai-news-bot?style=flat-square&logo=github&color=blue)](https://github.com/giftedunicorn/ai-news-bot/network/members)
+[![GitHub Stars](https://img.shields.io/github/stars/linfubin5667/ai-news-bot?style=flat-square&logo=github&color=yellow)](https://github.com/linfubin5667/ai-news-bot/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/linfubin5667/ai-news-bot?style=flat-square&logo=github&color=blue)](https://github.com/linfubin5667/ai-news-bot/network/members)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 [![Discord](https://img.shields.io/badge/Discord-加入社区-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/AtfQPh8T2T)
@@ -14,7 +14,7 @@
 [![Slack](https://img.shields.io/badge/Slack-集成-00D4AA?style=flat-square)](https://slack.com/)
 [![Telegram](https://img.shields.io/badge/Telegram-机器人-00D4AA?style=flat-square)](https://telegram.org/)
 
-[![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-自动化-2088FF?style=flat-square&logo=github-actions&logoColor=white)](https://github.com/giftedunicorn/ai-news-bot)
+[![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-自动化-2088FF?style=flat-square&logo=github-actions&logoColor=white)](https://github.com/linfubin5667/ai-news-bot)
 [![Claude](https://img.shields.io/badge/Claude-Sonnet_4.5-FF6B6B?style=flat-square&logo=anthropic&logoColor=white)](https://www.anthropic.com)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-支持-4285F4?style=flat-square&logo=ai&logoColor=white)](https://www.deepseek.com)
 
@@ -765,7 +765,7 @@ GPL-3.0 许可证 - 详见 LICENSE 文件
 ## 支持
 
 - **Discord 社区**：加入我们的 [Discord 服务器](https://discord.gg/AtfQPh8T2T) 进行讨论、获取支持和了解更新
-- **GitHub Issues**：报告 bug 和功能请求，请使用 [GitHub issue 跟踪器](https://github.com/giftedunicorn/ai-news-bot/issues)
+- **GitHub Issues**：报告 bug 和功能请求，请使用 [GitHub issue 跟踪器](https://github.com/linfubin5667/ai-news-bot/issues)
 
 ## 致谢
 
@@ -780,7 +780,7 @@ GPL-3.0 许可证 - 详见 LICENSE 文件
 
 <div align="center">
 
-[![Star History Chart](https://api.star-history.com/svg?repos=giftedunicorn/ai-news-bot&type=Date)](https://star-history.com/#giftedunicorn/ai-news-bot&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=linfubin5667/ai-news-bot&type=Date)](https://star-history.com/#linfubin5667/ai-news-bot&Date)
 
 </div>
 

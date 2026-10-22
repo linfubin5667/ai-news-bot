@@ -4,8 +4,8 @@
 
 🤖 **Your AI-Powered News Assistant** — Stay informed with automated, personalized AI news digests delivered daily
 
-[![GitHub Stars](https://img.shields.io/github/stars/giftedunicorn/ai-news-bot?style=flat-square&logo=github&color=yellow)](https://github.com/giftedunicorn/ai-news-bot/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/giftedunicorn/ai-news-bot?style=flat-square&logo=github&color=blue)](https://github.com/giftedunicorn/ai-news-bot/network/members)
+[![GitHub Stars](https://img.shields.io/github/stars/linfubin5667/ai-news-bot?style=flat-square&logo=github&color=yellow)](https://github.com/linfubin5667/ai-news-bot/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/linfubin5667/ai-news-bot?style=flat-square&logo=github&color=blue)](https://github.com/linfubin5667/ai-news-bot/network/members)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 [![Discord](https://img.shields.io/badge/Discord-Join_Community-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/AtfQPh8T2T)
@@ -14,7 +14,7 @@
 [![Slack](https://img.shields.io/badge/Slack-Integration-00D4AA?style=flat-square)](https://slack.com/)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-00D4AA?style=flat-square)](https://telegram.org/)
 
-[![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-Automation-2088FF?style=flat-square&logo=github-actions&logoColor=white)](https://github.com/giftedunicorn/ai-news-bot)
+[![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-Automation-2088FF?style=flat-square&logo=github-actions&logoColor=white)](https://github.com/linfubin5667/ai-news-bot)
 [![Claude](https://img.shields.io/badge/Claude-Sonnet_4.5-FF6B6B?style=flat-square&logo=anthropic&logoColor=white)](https://www.anthropic.com)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-Supported-4285F4?style=flat-square&logo=ai&logoColor=white)](https://www.deepseek.com)
 
@@ -925,7 +925,7 @@ GPL-3.0 License - See LICENSE file for details
 ## Support
 
 - **Discord Community**: Join our [Discord server](https://discord.gg/AtfQPh8T2T) for discussions, support, and updates
-- **GitHub Issues**: For bug reports and feature requests, use the [GitHub issue tracker](https://github.com/giftedunicorn/ai-news-bot/issues)
+- **GitHub Issues**: For bug reports and feature requests, use the [GitHub issue tracker](https://github.com/linfubin5667/ai-news-bot/issues)
 
 ## Credits
 
@@ -940,7 +940,7 @@ Powered by:
 
 <div align="center">
 
-[![Star History Chart](https://api.star-history.com/svg?repos=giftedunicorn/ai-news-bot&type=Date)](https://star-history.com/#giftedunicorn/ai-news-bot&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=linfubin5667/ai-news-bot&type=Date)](https://star-history.com/#linfubin5667/ai-news-bot&Date)
 
 </div>
 
