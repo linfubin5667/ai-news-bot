@@ -2,6 +2,7 @@
 News fetcher module - Fetches real-time AI news from various sources
 """
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional
 from datetime import datetime
 import xml.etree.ElementTree as ET
@@ -249,6 +250,51 @@ class NewsFetcher:
         clean = re.compile('<.*?>')
         return re.sub(clean, '', text).strip()
 
+    def _fetch_feeds_concurrently(
+        self,
+        feeds: Dict[str, str],
+        max_items_per_source: int
+    ) -> List[Dict[str, str]]:
+        """
+        Fetch all feeds in a {source_name: feed_url} mapping concurrently.
+
+        Each feed is fetched with fetch_rss_feed in a thread pool, so one slow
+        or failing source does not block the others (a failed source simply
+        contributes no items, exactly as in the previous serial version).
+        Results are reassembled in the original feed order, so the output is
+        identical to the serial version apart from speed.
+
+        Args:
+            feeds: Mapping of source name to RSS feed URL
+            max_items_per_source: Maximum items to fetch per source
+
+        Returns:
+            News items from all sources, each tagged with its 'source' name
+        """
+        if not feeds:
+            return []
+
+        results: Dict[str, List[Dict[str, str]]] = {}
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_source = {
+                executor.submit(self.fetch_rss_feed, feed_url, max_items_per_source): source_name
+                for source_name, feed_url in feeds.items()
+            }
+            for future in as_completed(future_to_source):
+                source_name = future_to_source[future]
+                try:
+                    results[source_name] = future.result()
+                except Exception as e:
+                    logger.error(f"Failed to fetch {source_name}: {str(e)}")
+                    results[source_name] = []
+
+        items: List[Dict[str, str]] = []
+        for source_name in feeds:
+            for item in results.get(source_name, []):
+                item['source'] = source_name
+                items.append(item)
+        return items
+
     def fetch_recent_news(
         self,
         language: str = "en",
@@ -256,6 +302,10 @@ class NewsFetcher:
     ) -> Dict[str, List[Dict[str, str]]]:
         """
         Fetch recent AI news from all configured sources.
+
+        Feeds are fetched concurrently (see _fetch_feeds_concurrently), so
+        gathering all sources takes a few seconds instead of one serial
+        request per source.
 
         Args:
             language: Language code for the response
@@ -267,16 +317,9 @@ class NewsFetcher:
         logger.info("Fetching recent AI news from all sources...")
 
         all_news = {
-            'international': [],
+            'international': self._fetch_feeds_concurrently(self.rss_feeds, max_items_per_source),
             'domestic': []
         }
-
-        # Fetch international news
-        for source_name, feed_url in self.rss_feeds.items():
-            items = self.fetch_rss_feed(feed_url, max_items_per_source)
-            for item in items:
-                item['source'] = source_name
-                all_news['international'].append(item)
 
         # Fetch domestic news based on language
         language_feeds_map = {
@@ -299,11 +342,7 @@ class NewsFetcher:
             logger.warning(f"No domestic feeds configured for language: {language}, using international only")
             return all_news
 
-        for source_name, feed_url in feeds.items():
-            items = self.fetch_rss_feed(feed_url, max_items_per_source)
-            for item in items:
-                item['source'] = source_name
-                all_news['domestic'].append(item)
+        all_news['domestic'] = self._fetch_feeds_concurrently(feeds, max_items_per_source)
 
         logger.info(
             f"Fetched {len(all_news['international'])} international news items "
