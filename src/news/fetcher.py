@@ -11,6 +11,7 @@ from datetime import datetime
 import xml.etree.ElementTree as ET
 from ..logger import setup_logger
 from .cache import NewsCache
+from .incremental import IncrementalUpdater, parse_pub_time
 
 
 logger = setup_logger(__name__)
@@ -200,6 +201,16 @@ class NewsFetcher:
             "false", "0", "no", "off"
         )
         self._rss_cache = NewsCache() if cache_enabled else None
+
+        # Incremental mode (TODO #9): when enabled, only items published
+        # after the last successful run are processed. Controlled by
+        # ENABLE_INCREMENTAL / INCREMENTAL_MIN_ITEMS.
+        incremental_enabled = os.getenv("ENABLE_INCREMENTAL", "false").strip().lower() in ("1", "true", "yes", "on")
+        self._incremental = IncrementalUpdater() if incremental_enabled else None
+        try:
+            self._incremental_min_items = int(os.getenv("INCREMENTAL_MIN_ITEMS", "10"))
+        except ValueError:
+            self._incremental_min_items = 10
         try:
             self._rss_cache_ttl = int(os.getenv("RSS_CACHE_TTL", "30"))
         except ValueError:
@@ -410,6 +421,76 @@ class NewsFetcher:
                 item['source'] = source_name
                 items.append(item)
         return items
+
+    def incremental_since(self):
+        """
+        The timestamp incremental mode should filter from: the last
+        successful run time when incremental mode is enabled, else None
+        (meaning a full fetch).
+        """
+        if self._incremental is None:
+            return None
+        return self._incremental.get_last_run_time()
+
+    def mark_incremental_run(self, stats: dict):
+        """Record a successful run so the next run can be incremental."""
+        if self._incremental is not None:
+            self._incremental.save_run_time(stats)
+
+    def fetch_news_since(
+        self,
+        since_time=None,
+        min_items: int = None,
+        **fetch_kwargs
+    ) -> Dict[str, List[Dict[str, str]]]:
+        """
+        Fetch news, keeping only items published after since_time.
+
+        A full fetch is performed first; filtering happens on the parsed
+        published timestamps. When since_time is None, or when fewer than
+        min_items new items are found, the full fetch result is returned
+        unchanged, so a quiet period never starves the digest.
+
+        Args:
+            since_time: Only keep items published after this time;
+                None disables filtering (full fetch)
+            min_items: Minimum new items required to stay incremental;
+                defaults to INCREMENTAL_MIN_ITEMS
+            **fetch_kwargs: Forwarded to fetch_recent_news
+                (language, max_items_per_source)
+
+        Returns:
+            Dictionary with 'international' and 'domestic' news lists
+        """
+        if since_time is None:
+            logger.info("Incremental mode: disabled or no last run, doing full fetch")
+            return self.fetch_recent_news(**fetch_kwargs)
+
+        if min_items is None:
+            min_items = self._incremental_min_items
+
+        logger.info(f"Incremental mode: fetching news since {since_time.isoformat()}")
+
+        all_news = self.fetch_recent_news(**fetch_kwargs)
+
+        filtered = {'international': [], 'domestic': []}
+        for category in ('international', 'domestic'):
+            for item in all_news[category]:
+                pub_time = parse_pub_time(item.get('published') or '')
+                if pub_time is not None and pub_time > since_time:
+                    filtered[category].append(item)
+
+        total_items = len(filtered['international']) + len(filtered['domestic'])
+
+        if total_items < min_items:
+            logger.warning(
+                f"Incremental fetch returned only {total_items} items (< {min_items}), "
+                f"falling back to full fetch"
+            )
+            return all_news
+
+        logger.info(f"Incremental fetch: {total_items} new items since last run")
+        return filtered
 
     def fetch_recent_news(
         self,
