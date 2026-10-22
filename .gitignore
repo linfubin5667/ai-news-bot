@@ -48,3 +48,5 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+# RSS fetch cache (TODO #4)
+.cache/
