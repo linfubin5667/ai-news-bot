@@ -792,6 +792,8 @@ INCREMENTAL_MIN_ITEMS=10 # 最少新闻数阈值
 
 ### 10. 改进错误恢复和部分失败容忍
 
+> ✅ **已完成（2026-10-22）**：四件套全部落地——① LLM 重试：base_provider 新增 is_transient_llm_error + call_with_retry（识别连接/超时/限流类错误与 HTTP 429/5xx，3 次指数退避 2s→4s；手工实现、未引入 tenacity 新依赖，与第 3 项保持一致），generator 的 Stage 1/2 调用统一走 _call_llm；② 降级：两阶段逻辑抽成 _two_stage_digest，失败时自动改发 _generate_simplified_digest（标题+链接简版），订阅者不断供；③ 本地备份：某语言通知全部失败时把摘要存到 .output/（已加入 .gitignore）；④ 退出码：按通知成功率分级（≥70% 为 0、部分失败 1、全失败 2、无通知配置 0），compute_exit_code 可独立测试。测试通过：错误分类、重试行为、降级端到端、瞬时故障自愈、退出码表与全部既有回归。🎉 至此 TODO 全部 10 项完成。
+
 **影响**：⭐⭐ | **难度**：🔧🔧 | **类型**：可靠性
 
 **目标**：提高系统鲁棒性，避免单点故障导致完全失败
@@ -884,11 +886,11 @@ def save_digest_to_file(digest: str, language: str):
 ```
 
 **验收标准**：
-- [ ] LLM API 临时错误自动重试
-- [ ] Stage 1 失败能降级
-- [ ] 所有通知失败时保存到文件
-- [ ] 退出码准确反映执行状态
-- [ ] GitHub Actions 日志清晰
+- [x] LLM API 临时错误自动重试
+- [x] Stage 1 失败能降级
+- [x] 所有通知失败时保存到文件
+- [x] 退出码准确反映执行状态
+- [x] GitHub Actions 日志清晰
 
 **预期收益**：
 - 减少因单点故障导致的完全失败
