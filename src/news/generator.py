@@ -98,6 +98,70 @@ class NewsGenerator:
 
         return formatted, news_items
 
+    def _deduplicate_news(self, news_items: List[Dict]) -> List[Dict]:
+        """
+        Remove duplicate news items that different sources report about the
+        same story.
+
+        Two items are duplicates when they share the same link, or when their
+        titles are highly similar (SequenceMatcher ratio > 0.85 on the
+        normalized titles). For title duplicates the copy with the longer
+        description is kept, in the original item's position. Items with
+        different headlines are never removed, so distinct stories survive.
+
+        Args:
+            news_items: News items with 'title', 'link' and 'description'
+
+        Returns:
+            Deduplicated list, in the original order
+        """
+        from difflib import SequenceMatcher
+
+        def normalize(title: str) -> str:
+            return ' '.join((title or '').lower().split())
+
+        unique_news: List[Dict] = []
+        seen_links = set()
+
+        for item in news_items:
+            link = (item.get('link') or '').strip()
+
+            # 1. Exact link dedup (empty links are not treated as duplicates)
+            if link and link in seen_links:
+                continue
+
+            # 2. Title similarity dedup
+            title = normalize(item.get('title', ''))
+            replaced = False
+            is_duplicate = False
+            for idx, existing in enumerate(unique_news):
+                if not title or not normalize(existing.get('title', '')):
+                    continue
+                similarity = SequenceMatcher(
+                    None, title, normalize(existing.get('title', ''))
+                ).ratio()
+                if similarity > 0.85:
+                    is_duplicate = True
+                    # Keep the copy with the more detailed description
+                    if len(item.get('description', '') or '') > len(existing.get('description', '') or ''):
+                        old_link = (existing.get('link') or '').strip()
+                        if old_link:
+                            seen_links.discard(old_link)
+                        unique_news[idx] = item
+                        if link:
+                            seen_links.add(link)
+                        replaced = True
+                    break
+
+            if not is_duplicate:
+                unique_news.append(item)
+                if link:
+                    seen_links.add(link)
+
+        if len(unique_news) != len(news_items):
+            logger.info(f"Deduplication: {len(news_items)} \u2192 {len(unique_news)} items")
+        return unique_news
+
     def generate_news_digest_from_sources(
         self,
         max_tokens: int = 8000,
@@ -131,6 +195,10 @@ class NewsGenerator:
                 language=language,
                 max_items_per_source=max_items_per_source
             )
+
+            # Deduplicate: different sources often report the same story
+            news_data['international'] = self._deduplicate_news(news_data['international'])
+            news_data['domestic'] = self._deduplicate_news(news_data['domestic'])
 
             if not news_data['international'] and not news_data['domestic']:
                 error_msg = "No news items fetched from RSS sources. Please check your network connection or RSS feed availability."
