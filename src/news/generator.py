@@ -5,6 +5,8 @@ from typing import List, Optional, Dict
 import json
 import re
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from ..logger import setup_logger
 from ..config import LANGUAGE_NAMES
 from .web_search import WebSearchTool, get_search_tool_definition
@@ -267,6 +269,167 @@ class NewsGenerator:
         logger.info(f"Heuristic selection: {int_count} international, {dom_count} domestic")
         return selected
 
+    # Source quality tiers for pre-scoring: tier1 = official company blogs,
+    # tier2 = major tech media and research feeds, tier3 = other majors.
+    # A tier entry matches a source name exactly or as a prefix, so the
+    # single entry 'arXiv' covers 'arXiv AI', 'arXiv NLP', and so on.
+    _SOURCE_TIERS = (
+        (0.3, ('OpenAI Blog', 'Google AI Blog', 'DeepMind Blog', 'Meta AI Blog', 'Microsoft AI Blog')),
+        (0.2, ('TechCrunch AI', 'VentureBeat AI', 'MIT Technology Review', 'arXiv')),
+        (0.1, ('The Verge AI', 'Ars Technica AI', 'Wired AI')),
+    )
+
+    def _score_news_item(self, item: Dict) -> float:
+        """
+        Score a news item's quality from 0 to 1 before Stage 1 selection.
+
+        Dimensions: keyword weight (max 0.3), source tier (max 0.3),
+        content quality (max 0.2), and freshness (max 0.2). Rule-based
+        and cheap, so low-quality items can be dropped before any LLM
+        tokens are spent on them.
+
+        Args:
+            item: News item with title, description, source, published
+
+        Returns:
+            Quality score between 0.0 and 1.0
+        """
+        score = 0.0
+
+        # 1. Keyword weight (title only)
+        title_lower = (item.get('title') or '').lower()
+        high_value_keywords = {
+            'breakthrough', 'release', 'launch', 'funding', 'acquisition',
+            'open-source', 'announce', 'introduce', 'unveil',
+        }
+        tech_keywords = {
+            'gpt', 'claude', 'llm', 'transformer', 'agent', 'multimodal',
+            'reasoning', 'benchmark', 'sota', 'api',
+        }
+        kw_score = sum(0.05 for kw in high_value_keywords if kw in title_lower)
+        kw_score += sum(0.03 for kw in tech_keywords if kw in title_lower)
+        score += min(kw_score, 0.3)
+
+        # 2. Source tier (exact name match; the 'arXiv' entry covers all
+        #    arXiv feeds such as 'arXiv AI' and 'arXiv NLP' by prefix)
+        source = item.get('source') or ''
+        for tier_score, names in self._SOURCE_TIERS:
+            if any(
+                source == name or (name == 'arXiv' and source.startswith('arXiv'))
+                for name in names
+            ):
+                score += tier_score
+                break
+
+        # 3. Content quality: description depth and concrete numbers
+        description = item.get('description') or ''
+        desc_len = len(description)
+        if desc_len > 500:
+            score += 0.1
+        elif desc_len > 300:
+            score += 0.05
+        if re.search(r'\d+%|\d+x|\$\d+[MB]|\d+\s*(billion|million)', description.lower()):
+            score += 0.1
+
+        # 4. Freshness based on the published timestamp
+        score += self._freshness_score(item.get('published') or '')
+
+        return min(score, 1.0)
+
+    @staticmethod
+    def _freshness_score(published: str) -> float:
+        """
+        Map an RSS/Atom published timestamp to a freshness score:
+        under 6h -> 0.2, under 24h -> 0.15, under 3d -> 0.1,
+        under 7d -> 0.05, older or unparseable -> 0.
+        """
+        if not published:
+            return 0.0
+        published_dt = None
+        try:
+            published_dt = parsedate_to_datetime(published)
+        except (TypeError, ValueError):
+            published_dt = None
+        if published_dt is None:
+            try:
+                published_dt = datetime.fromisoformat(published.replace('Z', '+00:00'))
+            except ValueError:
+                return 0.0
+        if published_dt.tzinfo is None:
+            published_dt = published_dt.replace(tzinfo=timezone.utc)
+
+        age_hours = (datetime.now(timezone.utc) - published_dt).total_seconds() / 3600
+        if age_hours <= 6:
+            return 0.2
+        if age_hours <= 24:
+            return 0.15
+        if age_hours <= 72:
+            return 0.1
+        if age_hours <= 168:
+            return 0.05
+        return 0.0
+
+    def _filter_by_quality(
+        self,
+        news_items: List[Dict],
+        min_score: float = 0.3,
+        min_keep: int = 25
+    ) -> List[Dict]:
+        """
+        Drop low-quality items before Stage 1 and sort the rest by score.
+
+        The score is attached to each kept item as 'quality_score'.
+        Safeguard: if filtering would leave fewer than min_keep items,
+        the top-scoring min_keep items are kept instead, so Stage 1
+        always has enough candidates even on a slow news day.
+
+        Args:
+            news_items: Items to filter
+            min_score: Minimum quality score to keep an item
+            min_keep: Minimum number of items to return
+
+        Returns:
+            Kept items, best first
+        """
+        scored = [(self._score_news_item(item), item) for item in news_items]
+        above_threshold = sum(1 for s, _ in scored if s >= min_score)
+        kept = [(s, item) for s, item in scored if s >= min_score]
+
+        if len(kept) < min_keep:
+            scored.sort(key=lambda pair: pair[0], reverse=True)
+            kept = scored[:min_keep]
+            logger.info(
+                f"Quality filtering safeguard: only {above_threshold} items "
+                f"scored >= {min_score}, keeping top {len(kept)} by score"
+            )
+
+        kept.sort(key=lambda pair: pair[0], reverse=True)
+        for s, item in kept:
+            item['quality_score'] = round(s, 3)
+
+        logger.info(
+            f"Quality filtering: {len(news_items)} \u2192 {len(kept)} items (threshold: {min_score})"
+        )
+        logger.debug(
+            f"Score distribution: {self._score_distribution([s for s, _ in scored])}"
+        )
+        return [item for _, item in kept]
+
+    @staticmethod
+    def _score_distribution(scores: List[float]) -> Dict[str, int]:
+        """Bucket scores into ranges for logging."""
+        bins = {'0-0.3': 0, '0.3-0.5': 0, '0.5-0.7': 0, '0.7-1.0': 0}
+        for s in scores:
+            if s < 0.3:
+                bins['0-0.3'] += 1
+            elif s < 0.5:
+                bins['0.3-0.5'] += 1
+            elif s < 0.7:
+                bins['0.5-0.7'] += 1
+            else:
+                bins['0.7-1.0'] += 1
+        return bins
+
     def generate_news_digest_from_sources(
         self,
         max_tokens: int = 8000,
@@ -312,6 +475,11 @@ class NewsGenerator:
                     fetched=fetched_total,
                     deduplicated=len(news_data['international']) + len(news_data['domestic']),
                 )
+
+            # Pre-score and drop low-quality items before Stage 1 spends
+            # LLM tokens analyzing them
+            news_data['international'] = self._filter_by_quality(news_data['international'])
+            news_data['domestic'] = self._filter_by_quality(news_data['domestic'])
 
             if not news_data['international'] and not news_data['domestic']:
                 error_msg = "No news items fetched from RSS sources. Please check your network connection or RSS feed availability."
