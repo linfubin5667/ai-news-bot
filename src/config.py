@@ -46,7 +46,91 @@ class Config:
         self.config_path = self._find_config_file(config_path)
         self.config_data = self._load_yaml_config()
 
+        # Fail fast: validate required configuration before doing any work
+        self._validate_config()
+
         logger.info(f"Configuration loaded from {self.config_path}")
+
+    # Environment variable that holds the API key for each supported provider
+    _PROVIDER_KEY_ENV = {
+        "claude": "ANTHROPIC_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "gemini": "GOOGLE_API_KEY",
+        "grok": "XAI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+    }
+
+    def _validate_config(self):
+        """
+        Validate that all required configuration is present at startup.
+
+        Collects every problem and raises a single ValueError listing them
+        all, so the user can fix everything in one pass instead of
+        discovering missing items one run at a time.
+
+        Raises:
+            ValueError: If any required configuration is missing or invalid
+        """
+        errors = []
+
+        # 1. LLM provider and API key
+        provider = self.llm_provider
+        key_env = self._PROVIDER_KEY_ENV.get(provider)
+        if key_env is None:
+            errors.append(
+                f"Unsupported LLM provider '{provider}'. "
+                f"Supported providers: {', '.join(sorted(self._PROVIDER_KEY_ENV))}. "
+                "Set LLM_PROVIDER in environment or 'llm.provider' in config.yaml."
+            )
+        elif not self.llm_api_key:
+            errors.append(
+                f"Missing API key for provider '{provider}'. "
+                f"Set {key_env} in environment."
+            )
+
+        # 2. Notification methods and their credentials
+        methods = self.notification_methods
+        if not methods:
+            errors.append(
+                "No notification methods configured. "
+                "Set NOTIFICATION_METHODS in environment (e.g., 'email,slack')."
+            )
+
+        if "email" in methods:
+            if not all([os.getenv("GMAIL_ADDRESS"),
+                        os.getenv("GMAIL_APP_PASSWORD"),
+                        os.getenv("EMAIL_TO")]):
+                errors.append(
+                    "Email notification enabled but missing credentials. "
+                    "Required: GMAIL_ADDRESS, GMAIL_APP_PASSWORD, EMAIL_TO"
+                )
+
+        if "slack" in methods and not os.getenv("SLACK_WEBHOOK_URL"):
+            errors.append("Slack enabled but SLACK_WEBHOOK_URL not set")
+
+        if "telegram" in methods:
+            if not all([os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")]):
+                errors.append("Telegram enabled but missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+
+        if "discord" in methods and not os.getenv("DISCORD_WEBHOOK_URL"):
+            errors.append("Discord enabled but DISCORD_WEBHOOK_URL not set")
+
+        if "webhook" in methods and not os.getenv("WEBHOOK_URL"):
+            errors.append("Webhook enabled but WEBHOOK_URL not set")
+
+        # 3. Languages (ai_response_languages falls back to ['en'], so this
+        #    guards against future changes to that behavior)
+        if not self.ai_response_languages:
+            errors.append("No valid languages configured (AI_RESPONSE_LANGUAGE)")
+
+        # 4. Report everything at once
+        if errors:
+            error_msg = "\n\u274c Configuration validation failed:\n\n" + "\n".join(f"  \u2022 {e}" for e in errors)
+            error_msg += "\n\nPlease fix the configuration and try again.\n"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        logger.info("\u2713 Configuration validation passed")
 
     def _find_config_file(self, config_path: Optional[str] = None) -> Path:
         """
