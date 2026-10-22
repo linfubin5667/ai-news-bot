@@ -1,8 +1,70 @@
 """
 Base LLM Provider - Abstract base class for all LLM providers
 """
+import time
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import Callable, List, Dict, Any, Optional
+
+
+_TRANSIENT_NAME_MARKERS = ('connection', 'timeout', 'timedout', 'ratelimit', 'rate_limit')
+_TRANSIENT_MESSAGE_MARKERS = (
+    'rate limit', 'temporarily', 'overloaded', 'connection error',
+    'connection reset', 'timed out', 'timeout', 'try again',
+)
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def is_transient_llm_error(exc: BaseException) -> bool:
+    """
+    Heuristic: is this LLM call failure worth retrying?
+
+    True for connection/timeout/rate-limit style errors (including the
+    SDK exception types such as APIConnectionError, APITimeoutError and
+    RateLimitError, matched by class name), for HTTP 429/5xx responses,
+    and for messages that clearly describe a transient condition.
+    """
+    name = type(exc).__name__.lower()
+    if any(marker in name for marker in _TRANSIENT_NAME_MARKERS):
+        return True
+
+    response = getattr(exc, 'response', None)
+    status = getattr(response, 'status_code', None)
+    if status in _RETRYABLE_STATUS_CODES:
+        return True
+    if status is not None:
+        return False  # a definitive HTTP answer (e.g. 400/401) is not transient
+
+    message = str(exc).lower()
+    return any(marker in message for marker in _TRANSIENT_MESSAGE_MARKERS)
+
+
+def call_with_retry(
+    fn: Callable[[], str],
+    max_attempts: int = 3,
+    base_delay: float = 2.0,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    logger=None,
+) -> str:
+    """
+    Call fn(), retrying transient failures with exponential backoff
+    (base_delay, then doubling). Non-transient errors raise at once;
+    after max_attempts the last error is re-raised.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return fn()
+        except Exception as e:
+            if attempt >= max_attempts or not is_transient_llm_error(e):
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            if logger is not None:
+                logger.warning(
+                    f"LLM call failed with a transient error (attempt {attempt}/{max_attempts}): "
+                    f"{type(e).__name__}: {e}; retrying in {delay:.0f}s"
+                )
+            sleep_fn(delay)
 
 
 class BaseLLMProvider(ABC):
