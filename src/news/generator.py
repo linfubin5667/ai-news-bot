@@ -12,6 +12,7 @@ from ..config import LANGUAGE_NAMES
 from .web_search import WebSearchTool, get_search_tool_definition
 from .fetcher import NewsFetcher
 from ..llm_providers import get_llm_provider
+from ..llm_providers.base_provider import call_with_retry
 
 
 logger = setup_logger(__name__)
@@ -430,6 +431,151 @@ class NewsGenerator:
                 bins['0.7-1.0'] += 1
         return bins
 
+    def _call_llm(self, messages, max_tokens: int) -> str:
+        """
+        Call the LLM provider, retrying transient failures (connection
+        errors, timeouts, rate limits, HTTP 429/5xx) with backoff.
+        """
+        return call_with_retry(
+            lambda: self.provider.generate(messages=messages, max_tokens=max_tokens),
+            logger=logger,
+        )
+
+    def _generate_simplified_digest(self, news_data: Dict) -> str:
+        """
+        Degraded fallback used when two-stage generation fails: a plain
+        list of titles and links (best items first, since the lists were
+        already deduplicated and quality-filtered), so subscribers still
+        receive something usable.
+        """
+        digest = "# AI News Digest (Simplified)\n\n"
+        digest += "_The full AI-generated digest was unavailable this run; " \
+                  "here are the top stories with links._\n\n"
+
+        for category in ('international', 'domestic'):
+            if news_data.get(category):
+                digest += f"## {category.title()} News\n\n"
+                for i, item in enumerate(news_data[category][:20], 1):
+                    digest += f"{i}. [{item['title']}]({item['link']})\n"
+                    digest += f"   Source: {item['source']}\n\n"
+
+        return digest
+
+    def _two_stage_digest(
+        self,
+        news_data: Dict,
+        max_tokens: int,
+        language: str,
+        stage1_template: Optional[str],
+        stage2_template: Optional[str]
+    ) -> tuple:
+        """
+        Two-stage prompt chaining: Stage 1 selects, Stage 2 summarizes.
+
+        Returns (digest_text, selected_count). Raises on failure; the
+        caller decides whether to degrade to the simplified digest.
+        """
+        # Format news with unique IDs for selection
+        formatted_news, news_items = self._format_news_with_ids(news_data)
+        total_items = len(news_items)
+
+        logger.info(f"Starting two-stage prompt chaining with {total_items} news items")
+
+        # ============================================================
+        # STAGE 1: Selection - Analyze and select 15-20 best items
+        # ============================================================
+        logger.info(f"Stage 1: Analyzing and selecting high-quality news items...")
+
+        # Use provided template or load from config
+        if stage1_template is None:
+            from ..config import Config
+            config = Config()
+            stage1_template = config.stage1_prompt_template
+
+        # Format Stage 1 prompt with placeholders
+        selection_prompt = stage1_template.format(
+            formatted_news=formatted_news,
+            total_items=total_items
+        )
+
+        messages = [{"role": "user", "content": selection_prompt}]
+        stage_started = time.perf_counter()
+        selection_response = self._call_llm(
+            messages=messages,
+            max_tokens=4000 # give enough tokens for selection
+        )
+        if self._metrics is not None:
+            self._metrics.record_llm_stage(
+                1, time.perf_counter() - stage_started,
+                getattr(self.provider, 'last_usage', None),
+            )
+
+        # Parse selected IDs (three-tier fallback: JSON -> regex -> heuristic)
+        selected_ids = self._parse_selection_response(selection_response, news_items)
+        if self._metrics is not None:
+            self._metrics.record_news_counts(selected=len(selected_ids))
+
+        logger.info(f"Stage 1 completed: Selected {len(selected_ids)} news items")
+        logger.debug(f"Selected IDs: {selected_ids}")
+
+        # ============================================================
+        # STAGE 2: Summarization - Create detailed summaries
+        # ============================================================
+        logger.info(f"Stage 2: Creating detailed summaries for selected items...")
+
+        # Format selected news for summarization
+        formatted_selected = "# Selected High-Quality AI News Items\n\n"
+        for news_id in selected_ids:
+            item = news_items[news_id]
+            formatted_selected += f"### [{news_id}] {item['title']}\n"
+            formatted_selected += f"**Source:** {item['source']}\n"
+            if item['description']:
+                formatted_selected += f"**Content:** {item['description']}\n"
+            formatted_selected += f"**Link:** {item['link']}\n"
+            if item['published']:
+                formatted_selected += f"**Published:** {item['published']}\n"
+            formatted_selected += "\n"
+
+        # Use provided template or load from config
+        if stage2_template is None:
+            from ..config import Config
+            config = Config()
+            stage2_template = config.stage2_prompt_template
+
+        # Format Stage 2 prompt with placeholders
+        summarization_prompt = stage2_template.format(
+            count=len(selected_ids),
+            selected_news=formatted_selected
+        )
+
+        # Add language instruction if not English
+        if language and language.lower() != "en":
+            language_name = LANGUAGE_NAMES.get(language.lower(), language.upper())
+            summarization_prompt += f"\n\nIMPORTANT: Please respond entirely in {language_name}."
+
+        # Execute Stage 2: Generate detailed summaries
+        messages = [{"role": "user", "content": summarization_prompt}]
+        stage_started = time.perf_counter()
+        response_text = self._call_llm(
+            messages=messages,
+            max_tokens=max_tokens
+        )
+        if self._metrics is not None:
+            self._metrics.record_llm_stage(
+                2, time.perf_counter() - stage_started,
+                getattr(self.provider, 'last_usage', None),
+            )
+
+        # Add footer with GitHub link
+        footer = "\n\n---\n\n*Generated by [AI News Bot](https://github.com/giftedunicorn/ai-news-bot) - Your AI-powered news assistant*"
+        response_text += footer
+
+        logger.info("Stage 2 completed: News digest generated successfully")
+        logger.info(f"Two-stage prompt chaining completed: {total_items} items → {len(selected_ids)} selected → full digest")
+        logger.debug(f"Response length: {len(response_text)} characters")
+
+        return response_text, len(selected_ids)
+
     def generate_news_digest_from_sources(
         self,
         max_tokens: int = 8000,
@@ -454,7 +600,8 @@ class NewsGenerator:
             Generated news digest as string
 
         Raises:
-            Exception: If fetching or generation fails
+            Exception: If fetching fails. Generation failures degrade to
+                a simplified digest instead of raising.
         """
         try:
             # Fetch real-time news. When incremental mode is enabled and a
@@ -490,116 +637,27 @@ class NewsGenerator:
                 logger.error(error_msg)
                 raise Exception(error_msg)
 
-            # Format news with unique IDs for selection
-            formatted_news, news_items = self._format_news_with_ids(news_data)
-            total_items = len(news_items)
-
-            logger.info(f"Starting two-stage prompt chaining with {total_items} news items")
-
-            # ============================================================
-            # STAGE 1: Selection - Analyze and select 15-20 best items
-            # ============================================================
-            logger.info(f"Stage 1: Analyzing and selecting high-quality news items...")
-
-            # Use provided template or load from config
-            if stage1_template is None:
-                from ..config import Config
-                config = Config()
-                stage1_template = config.stage1_prompt_template
-
-            # Format Stage 1 prompt with placeholders
-            selection_prompt = stage1_template.format(
-                formatted_news=formatted_news,
-                total_items=total_items
-            )
-
-            messages = [{"role": "user", "content": selection_prompt}]
-            stage_started = time.perf_counter()
-            selection_response = self.provider.generate(
-                messages=messages,
-                max_tokens=4000 # give enough tokens for selection
-            )
-            if self._metrics is not None:
-                self._metrics.record_llm_stage(
-                    1, time.perf_counter() - stage_started,
-                    getattr(self.provider, 'last_usage', None),
+            try:
+                digest_text, selected_count = self._two_stage_digest(
+                    news_data, max_tokens, language, stage1_template, stage2_template
                 )
-
-            # Parse selected IDs (three-tier fallback: JSON -> regex -> heuristic)
-            selected_ids = self._parse_selection_response(selection_response, news_items)
-            if self._metrics is not None:
-                self._metrics.record_news_counts(selected=len(selected_ids))
-
-            logger.info(f"Stage 1 completed: Selected {len(selected_ids)} news items")
-            logger.debug(f"Selected IDs: {selected_ids}")
-
-            # ============================================================
-            # STAGE 2: Summarization - Create detailed summaries
-            # ============================================================
-            logger.info(f"Stage 2: Creating detailed summaries for selected items...")
-
-            # Format selected news for summarization
-            formatted_selected = "# Selected High-Quality AI News Items\n\n"
-            for news_id in selected_ids:
-                item = news_items[news_id]
-                formatted_selected += f"### [{news_id}] {item['title']}\n"
-                formatted_selected += f"**Source:** {item['source']}\n"
-                if item['description']:
-                    formatted_selected += f"**Content:** {item['description']}\n"
-                formatted_selected += f"**Link:** {item['link']}\n"
-                if item['published']:
-                    formatted_selected += f"**Published:** {item['published']}\n"
-                formatted_selected += "\n"
-
-            # Use provided template or load from config
-            if stage2_template is None:
-                from ..config import Config
-                config = Config()
-                stage2_template = config.stage2_prompt_template
-
-            # Format Stage 2 prompt with placeholders
-            summarization_prompt = stage2_template.format(
-                count=len(selected_ids),
-                selected_news=formatted_selected
-            )
-
-            # Add language instruction if not English
-            if language and language.lower() != "en":
-                language_name = LANGUAGE_NAMES.get(language.lower(), language.upper())
-                summarization_prompt += f"\n\nIMPORTANT: Please respond entirely in {language_name}."
-
-            # Execute Stage 2: Generate detailed summaries
-            messages = [{"role": "user", "content": summarization_prompt}]
-            stage_started = time.perf_counter()
-            response_text = self.provider.generate(
-                messages=messages,
-                max_tokens=max_tokens
-            )
-            if self._metrics is not None:
-                self._metrics.record_llm_stage(
-                    2, time.perf_counter() - stage_started,
-                    getattr(self.provider, 'last_usage', None),
-                )
-
-            # Add footer with GitHub link
-            footer = "\n\n---\n\n*Generated by [AI News Bot](https://github.com/giftedunicorn/ai-news-bot) - Your AI-powered news assistant*"
-            response_text += footer
-
-            logger.info("Stage 2 completed: News digest generated successfully")
-            logger.info(f"Two-stage prompt chaining completed: {total_items} items → {len(selected_ids)} selected → full digest")
-            logger.debug(f"Response length: {len(response_text)} characters")
+            except Exception as stage_error:
+                logger.error(f"Two-stage generation failed: {stage_error}")
+                logger.info("Falling back to simplified digest (titles and links only)")
+                digest_text = self._generate_simplified_digest(news_data)
+                selected_count = 0
 
             if self._metrics is not None:
-                self._metrics.record_news_counts(final_chars=len(response_text))
+                self._metrics.record_news_counts(final_chars=len(digest_text))
 
-            # Digest succeeded: advance the incremental watermark so the
-            # next run only processes newer items
+            # A digest was produced (full or simplified): advance the
+            # incremental watermark so the next run only sees newer items
             self.news_fetcher.mark_incremental_run({
                 'fetched': fetched_total,
-                'selected': len(selected_ids),
+                'selected': selected_count,
             })
 
-            return response_text
+            return digest_text
 
         except Exception as e:
             logger.error(f"Failed to generate news digest from sources: {str(e)}", exc_info=True)
