@@ -1,6 +1,8 @@
 """
 News fetcher module - Fetches real-time AI news from various sources
 """
+import time
+
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional
@@ -182,7 +184,12 @@ class NewsFetcher:
 
     def fetch_rss_feed(self, feed_url: str, max_items: int = 10) -> List[Dict[str, str]]:
         """
-        Fetch news items from an RSS feed.
+        Fetch news items from an RSS feed, retrying transient failures.
+
+        Network errors and HTTP 5xx responses are retried up to 3 attempts
+        in total with exponential backoff (1s, then 2s). Permanent failures
+        (HTTP 4xx, malformed XML) are not retried. If every attempt fails,
+        an empty list is returned, exactly as before.
 
         Args:
             feed_url: URL of the RSS feed
@@ -191,58 +198,93 @@ class NewsFetcher:
         Returns:
             List of news items with title, link, description, and published date
         """
-        try:
-            logger.info(f"Fetching RSS feed: {feed_url}")
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self._fetch_rss_feed_once(feed_url, max_items)
+            except Exception as e:
+                if not self._is_retryable_error(e) or attempt == max_attempts:
+                    logger.error(f"Failed to fetch RSS feed {feed_url}: {str(e)}")
+                    return []
+                wait_seconds = 2 ** (attempt - 1)
+                logger.warning(
+                    f"Attempt {attempt}/{max_attempts} for {feed_url} failed "
+                    f"({str(e)}), retrying in {wait_seconds}s..."
+                )
+                time.sleep(wait_seconds)
+        return []
 
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
+    @staticmethod
+    def _is_retryable_error(error: Exception) -> bool:
+        """
+        Whether a fetch failure is worth retrying.
 
-            response = requests.get(feed_url, headers=headers, timeout=10)
-            response.raise_for_status()
+        Transient problems (connection errors, timeouts, HTTP 5xx) may
+        succeed on another attempt; permanent ones (HTTP 4xx such as 404,
+        malformed XML) will fail again, so they are not retried.
+        """
+        if isinstance(error, requests.HTTPError):
+            response = error.response
+            if response is not None and 400 <= response.status_code < 500:
+                return False
+            return True
+        if isinstance(error, ET.ParseError):
+            return False
+        return True
 
-            # Parse XML
-            root = ET.fromstring(response.content)
+    def _fetch_rss_feed_once(self, feed_url: str, max_items: int = 10) -> List[Dict[str, str]]:
+        """
+        Fetch and parse one RSS feed in a single attempt.
 
-            items = []
-            # Handle both RSS 2.0 and Atom formats
-            if root.tag == 'rss':
-                news_items = root.findall('.//item')[:max_items]
-                for item in news_items:
-                    title = item.find('title')
-                    link = item.find('link')
-                    description = item.find('description')
-                    pub_date = item.find('pubDate')
+        Raises on any failure; fetch_rss_feed decides whether to retry.
+        """
+        logger.info(f"Fetching RSS feed: {feed_url}")
 
-                    items.append({
-                        'title': title.text if title is not None else '',
-                        'link': link.text if link is not None else '',
-                        'description': self._clean_html(description.text if description is not None else ''),
-                        'published': pub_date.text if pub_date is not None else '',
-                    })
-            else:
-                # Atom format
-                namespace = {'atom': 'http://www.w3.org/2005/Atom'}
-                entries = root.findall('.//atom:entry', namespace)[:max_items]
-                for entry in entries:
-                    title = entry.find('atom:title', namespace)
-                    link = entry.find('atom:link', namespace)
-                    summary = entry.find('atom:summary', namespace)
-                    updated = entry.find('atom:updated', namespace)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
 
-                    items.append({
-                        'title': title.text if title is not None else '',
-                        'link': link.get('href', '') if link is not None else '',
-                        'description': self._clean_html(summary.text if summary is not None else ''),
-                        'published': updated.text if updated is not None else '',
-                    })
+        response = requests.get(feed_url, headers=headers, timeout=10)
+        response.raise_for_status()
 
-            logger.info(f"Fetched {len(items)} items from RSS feed")
-            return items
+        # Parse XML
+        root = ET.fromstring(response.content)
 
-        except Exception as e:
-            logger.error(f"Failed to fetch RSS feed {feed_url}: {str(e)}")
-            return []
+        items = []
+        # Handle both RSS 2.0 and Atom formats
+        if root.tag == 'rss':
+            news_items = root.findall('.//item')[:max_items]
+            for item in news_items:
+                title = item.find('title')
+                link = item.find('link')
+                description = item.find('description')
+                pub_date = item.find('pubDate')
+
+                items.append({
+                    'title': title.text if title is not None else '',
+                    'link': link.text if link is not None else '',
+                    'description': self._clean_html(description.text if description is not None else ''),
+                    'published': pub_date.text if pub_date is not None else '',
+                })
+        else:
+            # Atom format
+            namespace = {'atom': 'http://www.w3.org/2005/Atom'}
+            entries = root.findall('.//atom:entry', namespace)[:max_items]
+            for entry in entries:
+                title = entry.find('atom:title', namespace)
+                link = entry.find('atom:link', namespace)
+                summary = entry.find('atom:summary', namespace)
+                updated = entry.find('atom:updated', namespace)
+
+                items.append({
+                    'title': title.text if title is not None else '',
+                    'link': link.get('href', '') if link is not None else '',
+                    'description': self._clean_html(summary.text if summary is not None else ''),
+                    'published': updated.text if updated is not None else '',
+                })
+
+        logger.info(f"Fetched {len(items)} items from RSS feed")
+        return items
 
     def _clean_html(self, text: str) -> str:
         """Remove HTML tags from text"""
