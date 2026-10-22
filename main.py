@@ -19,6 +19,42 @@ from src.notifiers import (
 )
 
 
+logger = setup_logger(__name__)
+
+
+# Exit codes (TODO #10): make the run result machine-readable for CI
+EXIT_CODE_SUCCESS = 0           # everything succeeded
+EXIT_CODE_PARTIAL_SUCCESS = 0   # >=70% of notifications sent (acceptable)
+EXIT_CODE_PARTIAL_FAILURE = 1   # some sent, below the acceptable rate
+EXIT_CODE_TOTAL_FAILURE = 2     # nothing could be sent (alert)
+
+
+def compute_exit_code(total_attempts: int, success_count: int) -> int:
+    """Map notification outcomes to an exit code."""
+    if total_attempts <= 0:
+        # Nothing was configured to be sent; reaching the end is success
+        return EXIT_CODE_SUCCESS
+    success_rate = success_count / total_attempts
+    if success_rate >= 1.0:
+        return EXIT_CODE_SUCCESS
+    if success_rate >= 0.7:
+        return EXIT_CODE_PARTIAL_SUCCESS
+    if success_rate > 0:
+        return EXIT_CODE_PARTIAL_FAILURE
+    return EXIT_CODE_TOTAL_FAILURE
+
+
+def save_digest_to_file(digest: str, language: str):
+    """Back up a digest to .output/ when no notification could deliver it."""
+    from pathlib import Path
+    output_dir = Path(".output")
+    output_dir.mkdir(exist_ok=True)
+    filename = f"digest_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{language}.md"
+    output_file = output_dir / filename
+    output_file.write_text(digest, encoding='utf-8')
+    logger.info(f"Digest backed up to {output_file}")
+
+
 def main():
     """Main application entry point"""
     try:
@@ -161,6 +197,11 @@ def main():
                     if result_key not in overall_results["failed"]:
                         overall_results["failed"].append(result_key)
 
+                # If every notification for this language failed, keep a
+                # local copy of the digest so the run is not lost
+                if notification_methods and not lang_results["sent"]:
+                    save_digest_to_file(news_digest, language)
+
                 logger.info(f"Language {language.upper()} completed successfully")
 
             except Exception as lang_error:
@@ -183,12 +224,21 @@ def main():
             logger.warning(f"Failed to send: {', '.join(overall_results['failed'])}")
         logger.info("=" * 60)
 
-        # Return exit code based on results
-        if notification_methods and not overall_results["sent"]:
-            logger.error("All notifications failed")
-            return 1
-
-        return 0
+        # Exit code reflects the notification success rate (TODO #10)
+        total_attempts = len(languages) * len(notification_methods)
+        success_count = len(overall_results["sent"])
+        exit_code = compute_exit_code(total_attempts, success_count)
+        if total_attempts > 0:
+            success_rate = success_count / total_attempts
+            if exit_code == EXIT_CODE_TOTAL_FAILURE:
+                logger.error("✗ Total failure - no notifications sent")
+            elif exit_code == EXIT_CODE_PARTIAL_FAILURE:
+                logger.warning(f"⚠ Partial failure ({success_rate:.0%} of notifications sent)")
+            elif success_count < total_attempts:
+                logger.info(f"⚠ Partial success ({success_rate:.0%} of notifications sent)")
+            else:
+                logger.info("✓ All notifications sent successfully")
+        return exit_code
 
     except KeyboardInterrupt:
         logger.info("Application interrupted by user")
