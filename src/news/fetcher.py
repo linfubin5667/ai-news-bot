@@ -19,8 +19,15 @@ logger = setup_logger(__name__)
 class NewsFetcher:
     """Fetch real-time AI news from RSS feeds and news APIs"""
 
-    def __init__(self):
-        """Initialize the news fetcher"""
+    def __init__(self, metrics=None):
+        """
+        Initialize the news fetcher.
+
+        Args:
+            metrics: Optional MetricsCollector (src/metrics.py). When
+                given, every fetch attempt is recorded for the run report.
+        """
+        self._metrics = metrics
         # RSS feed sources for AI news (reliable sources only)
         self.rss_feeds = {
             # Major Tech Media
@@ -198,7 +205,7 @@ class NewsFetcher:
         except ValueError:
             self._rss_cache_ttl = 30
 
-    def fetch_rss_feed(self, feed_url: str, max_items: int = 10) -> List[Dict[str, str]]:
+    def fetch_rss_feed(self, feed_url: str, max_items: int = 10, source_name: str = None) -> List[Dict[str, str]]:
         """
         Fetch news items from an RSS feed.
 
@@ -220,15 +227,17 @@ class NewsFetcher:
                 feed_url, max_items, self._rss_cache_ttl
             )
             if cached is not None:
+                if self._metrics is not None:
+                    self._metrics.record_rss_fetch(source_name or feed_url, 0.0, len(cached), True)
                 return cached
 
-        items = self._fetch_rss_feed_with_retry(feed_url, max_items)
+        items = self._fetch_rss_feed_with_retry(feed_url, max_items, source_name)
 
         if items and self._rss_cache is not None:
             self._rss_cache.set_rss_cache(feed_url, items, max_items)
         return items
 
-    def _fetch_rss_feed_with_retry(self, feed_url: str, max_items: int = 10) -> List[Dict[str, str]]:
+    def _fetch_rss_feed_with_retry(self, feed_url: str, max_items: int = 10, source_name: str = None) -> List[Dict[str, str]]:
         """
         Fetch an RSS feed with retries on transient failures.
 
@@ -247,7 +256,7 @@ class NewsFetcher:
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
-                return self._fetch_rss_feed_once(feed_url, max_items)
+                return self._fetch_rss_feed_once(feed_url, max_items, source_name)
             except Exception as e:
                 if not self._is_retryable_error(e) or attempt == max_attempts:
                     logger.error(f"Failed to fetch RSS feed {feed_url}: {str(e)}")
@@ -278,12 +287,31 @@ class NewsFetcher:
             return False
         return True
 
-    def _fetch_rss_feed_once(self, feed_url: str, max_items: int = 10) -> List[Dict[str, str]]:
+    def _fetch_rss_feed_once(self, feed_url: str, max_items: int = 10, source_name: str = None) -> List[Dict[str, str]]:
         """
         Fetch and parse one RSS feed in a single attempt.
 
         Raises on any failure; fetch_rss_feed decides whether to retry.
+        The attempt (duration, item count, success) is recorded in the
+        metrics collector when one was provided.
         """
+        started = time.perf_counter()
+        try:
+            items = self._fetch_and_parse_feed(feed_url, max_items)
+        except Exception:
+            if self._metrics is not None:
+                self._metrics.record_rss_fetch(
+                    source_name or feed_url, time.perf_counter() - started, 0, False
+                )
+            raise
+        if self._metrics is not None:
+            self._metrics.record_rss_fetch(
+                source_name or feed_url, time.perf_counter() - started, len(items), True
+            )
+        return items
+
+    def _fetch_and_parse_feed(self, feed_url: str, max_items: int = 10) -> List[Dict[str, str]]:
+        """Perform the actual HTTP request and XML parsing for one feed."""
         logger.info(f"Fetching RSS feed: {feed_url}")
 
         headers = {
@@ -365,7 +393,7 @@ class NewsFetcher:
         results: Dict[str, List[Dict[str, str]]] = {}
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_source = {
-                executor.submit(self.fetch_rss_feed, feed_url, max_items_per_source): source_name
+                executor.submit(self.fetch_rss_feed, feed_url, max_items_per_source, source_name): source_name
                 for source_name, feed_url in feeds.items()
             }
             for future in as_completed(future_to_source):
