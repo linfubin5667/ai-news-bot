@@ -54,3 +54,6 @@ htmlcov/
 
 # Performance metrics (TODO #7)
 .metrics/
+
+# Incremental mode state (TODO #9)
+.last_run
