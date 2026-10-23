@@ -56,7 +56,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           # Notifications: set the NOTIFICATION_METHODS Actions *variable*
           # (e.g. "email" or "email,slack") and add the matching secrets.
-          NOTIFICATION_METHODS: ${{ vars.NOTIFICATION_METHODS }}
+          NOTIFICATION_METHODS: ${{ vars.NOTIFICATION_METHODS || 'email' }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
