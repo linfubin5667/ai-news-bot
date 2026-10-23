@@ -1,0 +1,80 @@
+name: Daily AI News Digest
+
+# Runs the bot on GitHub's machines: every day at 09:00 Asia/Shanghai,
+# or on demand from the Actions tab (Run workflow).
+on:
+  schedule:
+    - cron: '0 1 * * *' # 01:00 UTC = 09:00 Asia/Shanghai
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: 'LLM provider (claude / deepseek / gemini / grok / openai)'
+        required: false
+        default: ''
+      language:
+        description: 'Digest language (en / zh / ja / ...)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the digest bot
+        env:
+          # Which provider to use: manual-run input wins, then the
+          # LLM_PROVIDER Actions variable, then config.yaml's default.
+          LLM_PROVIDER: ${{ inputs.provider || vars.LLM_PROVIDER }}
+          AI_RESPONSE_LANGUAGE: ${{ inputs.language || vars.AI_RESPONSE_LANGUAGE || 'zh' }}
+          # LLM API keys (add the one for your provider under
+          # Settings -> Secrets and variables -> Actions -> Secrets)
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Notifications: set the NOTIFICATION_METHODS Actions *variable*
+          # (e.g. "email" or "email,slack") and add the matching secrets.
+          NOTIFICATION_METHODS: ${{ vars.NOTIFICATION_METHODS }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          # Runners are ephemeral, so the on-disk RSS cache cannot persist
+          ENABLE_RSS_CACHE: 'false'
+        run: python main.py
+
+      - name: Upload run artifacts (metrics and digest backups)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-run-${{ github.run_id }}
+          path: |
+            .metrics/
+            .output/
+          if-no-files-found: ignore
+          retention-days: 14
