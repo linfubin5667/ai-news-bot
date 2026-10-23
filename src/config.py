@@ -105,6 +105,13 @@ class Config:
                     "Required: GMAIL_ADDRESS, GMAIL_APP_PASSWORD, EMAIL_TO"
                 )
 
+        if "resend" in methods:
+            if not all([os.getenv("RESEND_API_KEY"), os.getenv("EMAIL_TO")]):
+                errors.append(
+                    "Resend notification enabled but missing credentials. "
+                    "Required: RESEND_API_KEY, EMAIL_TO"
+                )
+
         if "slack" in methods and not os.getenv("SLACK_WEBHOOK_URL"):
             errors.append("Slack enabled but SLACK_WEBHOOK_URL not set")
 
