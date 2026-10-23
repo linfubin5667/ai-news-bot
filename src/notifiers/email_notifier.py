@@ -89,14 +89,30 @@ class EmailNotifier:
 
             logger.info(f"Sending email via Gmail SMTP to {self.email_to}")
 
-            # Connect and send
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.gmail_address, self.gmail_app_password)
-                server.sendmail(self.gmail_address, self.email_to, msg.as_string())
-
-            logger.info("Email sent successfully via Gmail SMTP")
-            return True
+            # Connect and send. Try STARTTLS on 587 first; some networks
+            # (notably CI runners) drop that connection during the SMTP
+            # greeting, so fall back to implicit SSL on 465.
+            last_error = None
+            for mode, port in (("starttls", self.smtp_port), ("ssl", 465)):
+                try:
+                    if mode == "starttls":
+                        server_ctx = smtplib.SMTP(self.smtp_server, port, timeout=30)
+                    else:
+                        server_ctx = smtplib.SMTP_SSL(self.smtp_server, port, timeout=30)
+                    with server_ctx as server:
+                        if mode == "starttls":
+                            server.starttls()
+                        server.login(self.gmail_address, self.gmail_app_password)
+                        server.sendmail(self.gmail_address, self.email_to, msg.as_string())
+                    logger.info(f"Email sent successfully via Gmail SMTP ({mode}, port {port})")
+                    return True
+                except smtplib.SMTPAuthenticationError:
+                    # Credentials are wrong; retrying on another port won't help
+                    raise
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Gmail SMTP via {mode} (port {port}) failed: {e}")
+            raise last_error if last_error else RuntimeError("Gmail SMTP send failed")
 
         except smtplib.SMTPAuthenticationError as e:
             logger.error(
