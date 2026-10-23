@@ -44,7 +44,8 @@ jobs:
         env:
           # Which provider to use: manual-run input wins, then the
           # LLM_PROVIDER Actions variable, then config.yaml's default.
-          LLM_PROVIDER: ${{ inputs.provider || vars.LLM_PROVIDER }}
+          LLM_PROVIDER: ${{ inputs.provider || vars.LLM_PROVIDER || 'deepseek' }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'deepseek-chat' }}
           AI_RESPONSE_LANGUAGE: ${{ inputs.language || vars.AI_RESPONSE_LANGUAGE || 'zh' }}
           # LLM API keys (add the one for your provider under
           # Settings -> Secrets and variables -> Actions -> Secrets)
