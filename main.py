@@ -12,6 +12,7 @@ from src.metrics import MetricsCollector
 from src.news import NewsGenerator
 from src.notifiers import (
     EmailNotifier,
+    ResendNotifier,
     WebhookNotifier,
     SlackNotifier,
     TelegramNotifier,
@@ -139,6 +140,17 @@ def main():
                     else:
                         lang_results["failed"].append("email")
                         logger.warning(f"Email notification failed for {language.upper()}")
+
+                # Send Resend (HTTPS email API) notification if enabled
+                if "resend" in notification_methods:
+                    logger.info(f"Sending Resend email notification for {language.upper()}...")
+                    resend_notifier = ResendNotifier()
+                    if resend_notifier.send(news_digest, language=language):
+                        lang_results["sent"].append("resend")
+                        logger.info(f"Resend notification sent successfully for {language.upper()}")
+                    else:
+                        lang_results["failed"].append("resend")
+                        logger.warning(f"Resend notification failed for {language.upper()}")
 
                 # Send webhook notification if enabled
                 if "webhook" in notification_methods:
