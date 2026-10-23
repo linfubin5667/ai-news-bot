@@ -54,9 +54,10 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           # Notifications: set the NOTIFICATION_METHODS Actions *variable*
           # (e.g. "email" or "email,slack") and add the matching secrets.
-          NOTIFICATION_METHODS: ${{ vars.NOTIFICATION_METHODS || 'email' }}
+          NOTIFICATION_METHODS: ${{ vars.NOTIFICATION_METHODS || 'resend' }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
@@ -77,5 +78,6 @@ jobs:
           path: |
             .metrics/
             .output/
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
