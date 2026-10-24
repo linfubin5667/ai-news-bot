@@ -62,6 +62,25 @@
 
 </div>
 
+## 🔧 本 Fork 的维护说明
+
+本仓库是 [giftedunicorn/ai-news-bot](https://github.com/giftedunicorn/ai-news-bot) 的一个 fork，自 2026 年 10 月起由 [Fubin Lin](https://github.com/linfubin5667) 独立维护，目前领先上游 50 多个提交，主要改进包括：
+
+- **RSS 并发抓取** —— 10 线程并行，保留原始顺序，单源失败互不影响
+- **新闻去重** —— 链接精确去重 + 标题相似度（>0.85）去重
+- **RSS 请求重试** —— 网络错误与 5xx 最多重试 3 次并指数退避；4xx 与解析错误快速放弃
+- **RSS 抓取缓存** —— 30 分钟 TTL 的本地缓存（`ENABLE_RSS_CACHE=false` 可关闭）
+- **Stage-1 解析健壮性** —— 三层降级解析（JSON → 正则提取 ID → 启发式选取），模型输出畸形也不会中断运行
+- **启动配置校验** —— 启动时一次性汇总所有缺失的凭据
+- **性能指标** —— 每源抓取耗时、阶段耗时与通知结果导出到 `.metrics/run.json`
+- **新闻质量预评分** —— 关键词、来源层级、内容质量、时效性四维打分，阈值过滤并保留得分最高的 25 条兜底
+- **增量更新模式** —— `.last_run` 水位线只抓取新内容（`ENABLE_INCREMENTAL` 开启）
+- **错误恢复** —— LLM 瞬时错误自动重试，两阶段失败自动降级为简版摘要，通知失败时摘要备份到 `.output/`
+
+### 每日自动运行
+
+GitHub Actions 工作流（`.github/workflows/daily-digest.yml`）每天北京时间 09:00（UTC 01:00）自动运行，也可在 Actions 页面手动触发。每日摘要由 DeepSeek（`deepseek-chat`）生成中文版，通过 [Resend](https://resend.com) 的 HTTPS API 以邮件投递。
+
 ## 🚀 部署选项
 
 选择您的部署方式：
