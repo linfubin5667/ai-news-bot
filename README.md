@@ -62,6 +62,25 @@
 
 </div>
 
+## 🔧 Fork Maintenance
+
+This repository is a fork of [giftedunicorn/ai-news-bot](https://github.com/giftedunicorn/ai-news-bot), actively maintained by [Fubin Lin](https://github.com/linfubin5667) since October 2026. It is currently ahead of upstream by 50+ commits, covering:
+
+- **Concurrent RSS fetching** — 10 parallel workers with original feed order preserved and per-source failure isolation
+- **News deduplication** — exact-link plus title-similarity (>0.85) deduplication
+- **RSS retry with backoff** — network errors and 5xx retried up to 3 times; 4xx and parse errors fail fast
+- **RSS fetch cache** — 30-minute TTL on-disk cache (disable with `ENABLE_RSS_CACHE=false`)
+- **Robust Stage-1 parsing** — three-tier fallback (JSON → regex ID extraction → heuristic selection) so malformed model output never breaks the run
+- **Startup configuration validation** — all missing credentials are reported in one message at startup
+- **Performance metrics** — per-source fetch times, stage durations, and notification results exported to `.metrics/run.json`
+- **News quality pre-scoring** — four-dimension scoring (keywords, source tier, content, freshness) with a threshold filter and a safeguard that keeps the top 25 items
+- **Incremental update mode** — a `.last_run` watermark fetches only new items (opt-in via `ENABLE_INCREMENTAL`)
+- **Error recovery** — transient LLM errors retried automatically, two-stage failure falls back to a simplified digest, and failed notifications back the digest up to `.output/`
+
+### Daily automated run
+
+A GitHub Actions workflow (`.github/workflows/daily-digest.yml`) runs the bot every day at 09:00 Asia/Shanghai (01:00 UTC) and can also be triggered manually from the Actions tab. The daily digest is generated with DeepSeek (`deepseek-chat`) in Chinese and delivered by email via the [Resend](https://resend.com) HTTPS API.
+
 ## 🚀 Deployment Options
 
 Choose your deployment method:
