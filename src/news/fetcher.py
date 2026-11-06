@@ -39,14 +39,16 @@ class NewsFetcher:
             "Wired AI": "https://www.wired.com/feed/tag/ai/latest/rss",
             "The Next Web": "https://thenextweb.com/feed",
             "The Verge AI": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
-            "Engadget AI": "https://www.engadget.com/tag/ai/rss.xml",
+            "Engadget": "https://www.engadget.com/rss.xml",  # AI tag feed 404s; general feed, Stage 1 selects AI items
 
             # Official AI Company Blogs
-            "OpenAI Blog": "https://openai.com/blog/rss/",
+            "OpenAI Blog": "https://openai.com/news/rss.xml",  # was /blog/rss/ (404); verified 2026-11-05
             "Google AI Blog": "https://blog.google/technology/ai/rss/",
             "DeepMind Blog": "https://deepmind.google/blog/rss.xml",
-            "Meta AI Blog": "https://ai.meta.com/blog/rss/",
-            "Microsoft AI Blog": "https://blogs.microsoft.com/ai/feed/",
+            # Meta AI Blog removed 2026-11-05: Meta publishes no RSS feed
+            # (ai.meta.com/blog/rss/ 404s; see BAD_SOURCES.md). Meta news is
+            # still covered second-hand by TechCrunch / The Verge / Ars Technica.
+            "Microsoft AI Blog": "https://www.microsoft.com/en-us/ai/blog/feed/",  # was blogs.microsoft.com/ai/feed/ (410)
 
             # Research & Academic
             "arXiv AI": "https://rss.arxiv.org/rss/cs.AI",
@@ -55,7 +57,8 @@ class NewsFetcher:
             "arXiv NLP": "https://rss.arxiv.org/rss/cs.CL",
 
             # Industry Verticals
-            "Healthcare IT News AI": "https://www.healthcareitnews.com/taxonomy/term/31/feed",
+            # Healthcare IT News AI removed 2026-11-05: taxonomy feed 404s and
+            # no verified replacement feed was found (see BAD_SOURCES.md).
             "Robotics Business Review": "https://www.roboticsbusinessreview.com/feed/",
             "Autonomous Vehicle News": "https://www.autonomousvehicleinternational.com/feed",
         }
@@ -374,6 +377,8 @@ class NewsFetcher:
     def _clean_html(self, text: str) -> str:
         """Remove HTML tags from text"""
         import re
+        if text is None:
+            return ''
         clean = re.compile('<.*?>')
         return re.sub(clean, '', text).strip()
 
