@@ -1,3 +1,43 @@
+# Daily AI News Digest — with public English site (GitHub Pages)
+#
+# WHAT THIS FILE IS
+#   A replacement for .github/workflows/daily-digest.yml. The `digest` job
+#   below is the CURRENT workflow, unchanged: same schedule, same Chinese
+#   (zh) digest, same Resend email. The only addition is a second job,
+#   `site`, which generates an English digest, saves it, builds a static
+#   site from it, and publishes it with GitHub Pages.
+#
+# PERMISSIONS (why each one is needed)
+#   contents: read   — both jobs check out the repository.
+#   pages: write     — the `site` job publishes to GitHub Pages.
+#   id-token: write  — required by actions/deploy-pages (OIDC).
+#   The `site` job additionally overrides contents to `write`, because it
+#   commits each day's English digest (site/digests/YYYY-MM-DD.md) back to
+#   the repository. That is how the archive survives: Actions runners are
+#   ephemeral, so without the commit-back the site would only ever show
+#   the latest day. A push made with GITHUB_TOKEN does not trigger a new
+#   workflow run, and the commit message carries [skip ci] as a second
+#   guard, so this cannot loop.
+#
+# BEFORE THIS FILE CAN DEPLOY ANYTHING (Lin, in the browser)
+#   1. Open the repository on GitHub: linfubin5667/ai-news-bot
+#   2. Click Settings (top tab bar, far right), then Pages in the left menu.
+#   3. Under "Build and deployment", set Source to "GitHub Actions"
+#      (NOT "Deploy from a branch"), then Save.
+#   4. Only after that, push this file. Until Pages is enabled, the
+#      `site` job's deploy step fails while the `digest` job still succeeds.
+#
+# COST / BEHAVIOUR NOTES
+#   - The English digest is a second LLM call each day (same provider and
+#     model as the Chinese one, DeepSeek by default). It roughly doubles
+#     the daily LLM cost, which is small on DeepSeek.
+#   - The `site` job runs after `digest` (needs: digest, if: always()), so
+#     a failed Chinese email never blocks the site, and vice versa.
+#   - Manual runs (Actions -> Run workflow) still control the Chinese
+#     digest's provider/language inputs; the site is always English.
+#   - First run after pushing: the site deploys with that day's digest.
+#     The address is https://linfubin5667.github.io/ai-news-bot/
+#
 name: Daily AI News Digest
 
 # Runs the bot on GitHub's machines: every day at 09:00 Asia/Shanghai,
@@ -18,6 +58,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: daily-digest
@@ -81,3 +123,70 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+
+  site:
+    # English site only. Runs even if the Chinese email job failed.
+    needs: digest
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # commit each day's English digest back (archive)
+      pages: write
+      id-token: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the commit-back push works
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate English digest for the site
+        env:
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'deepseek' }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'deepseek-chat' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ENABLE_RSS_CACHE: 'false'
+        run: python scripts/save_en_digest.py
+
+      - name: Commit today's English digest back to the repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add site/digests
+          if git diff --cached --quiet; then
+            echo "No new digest to commit."
+          else
+            git commit -m "Add English digest for $(date +%F) [skip ci]"
+            git push
+          fi
+
+      - name: Build the static site
+        run: python scripts/build_site.py
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        environment:
+          name: github-pages
+          url: ${{ steps.deployment.outputs.page_url }}
