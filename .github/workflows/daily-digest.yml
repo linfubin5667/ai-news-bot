@@ -161,6 +161,13 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Config() validates notification settings at startup even though
+          # this script sends no email, so pass the same resend vars as
+          # the digest job; without them it fails fast with
+          # "No notification methods configured".
+          NOTIFICATION_METHODS: ${{ vars.NOTIFICATION_METHODS || 'resend' }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
           ENABLE_RSS_CACHE: 'false'
         run: python scripts/save_en_digest.py
 
